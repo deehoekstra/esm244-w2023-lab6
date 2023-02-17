@@ -1,0 +1,236 @@
+---
+title: "Lab 6: clustering"
+author: "Danielle Hoekstra"
+date: "2023-02-16"
+output: html_document
+---
+
+```{r setup, echo = TRUE, warning = FALSE, message = FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+
+library(tidyverse)
+library(janitor)
+library(palmerpenguins)
+
+###packages for cluster analysis
+library(NbClust)
+library(cluster)
+library(factoextra)
+library(dendextend)
+library(ggdendro)
+
+### command + shift + return will run all above your cursor
+```
+
+# Intro to cluster analysis
+
+## Part 1: K-means clustering
+
+```{r}
+##come in with data that we dont necessarily assigned clusters ahead of time, we are just looking at a mass of points, see if ai can find clusters, not telling it upfront what the clusters will be important to visually analyze
+
+ggplot(penguins) +
+  geom_point(aes(x = bill_length_mm,
+                 y = bill_depth_mm,
+                 color = species,
+                 shape = sex),
+             size = 3,
+             alpha = 0.7) +
+  scale_color_manual(values = c('orange', 'cyan4', 'darkmagenta'))
+
+ggplot(penguins) +
+  geom_point(aes(x = flipper_length_mm,
+                 y = body_mass_g, 
+                 color = species,
+                 shape = sex),
+             size = 3,
+             alpha = 0.7) +
+  scale_color_manual(values = c('orange', 'cyan4', 'darkmagenta'))
+```
+
+### Create a complete, scaled version of the data
+
+```{r}
+penguins_complete <- penguins %>% 
+  drop_na(bill_length_mm, bill_depth_mm, body_mass_g, flipper_length_mm)
+
+penguins_scale <- penguins_complete %>% 
+  select(ends_with('_mm'), body_mass_g) %>% 
+  scale()
+
+#scale: all values have a mean of zero, re-centered to the average will be 0 and std deviation will be 1, get all observations on the same playing field
+```
+
+### Estimate number of clusters
+
+```{r}
+number_estimate <- NbClust(penguins_scale, 
+                           min.nc = 2, max.nc = 10, 
+                           method = 'kmeans')
+
+## min.nc = minimum number of clusters,  max.nc = maximum number of clusters you would like
+## where do you see the greatest number jump between each # of clusters in Huberts graphical methods, where does it minimize the greatest amount of error
+
+# From console:
+
+#* Among all indices:                                                
+#* 8 proposed 2 as the best number of clusters 
+#* 11 proposed 3 as the best number of clusters 
+#* 1 proposed 4 as the best number of clusters 
+#* 3 proposed 5 as the best number of clusters 
+#* 1 proposed 10 as the best number of clusters 
+
+#* Conclusion:                          
+#* * According to the majority rule, the best number of clusters is  3 
+
+fviz_nbclust(penguins_scale, FUNcluster = kmeans,
+             method = 'wss', k.max = 10)
+
+# another method to fins optimal number of clusters
+
+```
+
+### Run some k-means
+
+```{r}
+set.seed(123)
+penguins_km <- kmeans(penguins_scale, 
+                      centers = 3,
+                      iter.max = 10,
+                      nstart = 25)
+# penguins_km$size
+# penguins_km$cluster
+# number of centroids to start with, this is how we actually do the clustering
+
+penguins_cl <- penguins_complete %>% 
+  mutate(cluster_no = factor(penguins_km$cluster))
+
+penguins_cl
+```
+```{r}
+ggplot(penguins_cl) +
+  geom_point(aes( x = flipper_length_mm,
+                  y = body_mass_g,
+                  color = cluster_no,
+                  shape = species)) +
+  scale_color_viridis_d()
+
+ggplot(penguins_cl) +
+  geom_point(aes( x = bill_length_mm,
+                  y = bill_depth_mm,
+                  color = cluster_no,
+                  shape = species)) +
+  scale_color_viridis_d()
+
+# scale_color_viridis_d() <- color blind friendly colors
+```
+
+### How well did the clusters match up?
+
+```{r}
+penguins_cl %>% 
+  select(species, cluster_no) %>% 
+  table()
+```
+
+## Hierarchical clustering
+
+### Start with complete linkage
+
+```{r}
+## create distance matrix
+peng_dist <- dist(penguins_scale, method = 'euclidean')
+
+## hierarchical clustering
+peng_hc_complete <- hclust(peng_dist, method = 'complete')
+
+## plot a dendrogram
+plot(peng_hc_complete, cex = 0.6, hang = -1)
+
+## cut the tree into three clusters
+peng_cut_hc <- cutree(peng_hc_complete, 3)
+
+### also: single, average, ward.D
+
+table(peng_cut_hc, penguins_complete$species) 
+
+#different results from kmeans clustering, can now differentiate adelies and chinstraps better, check which clusters get which species, see the underlying structure. we are not trying to predict species, see if clustering finds the underlying structure
+```
+
+## World Bank data: read in and simplify
+
+```{r}
+wb_ebv <- read_csv(here::here('data/wb_env.csv'))
+
+wb_ghg_20 <- wb_ebv %>% 
+  slice_max(n = 20, ghg)
+
+summary(wb_ghg_20)
+
+wb_scaled <- wb_ghg_20 %>% 
+  select(3:7) %>%  
+  scale()
+
+summary (wb_scaled)
+
+rownames(wb_scaled) <- wb_ghg_20$name #assign row names based on names in original dataset
+
+```
+
+### Find the Euclidean distances
+
+```{r}
+euc_distance <- dist(wb_scaled, method = 'euclidean')
+euc_distance #distance matrix
+```
+### Perform Hierarchical clustering using complete linkage
+
+```{r}
+hc_complete <- hclust(euc_distance, method = 'complete')
+
+plot(hc_complete, cex = .6, hang = -1) #get dendrogram
+```
+
+### Perform hierarchical clustering by single linkage
+
+```{r}
+hc_single <- hclust(euc_distance, method = 'single')
+
+plot(hc_single, cex = .6, hang = -1)
+```
+
+### Make a tanglegram (comparing two dendrograms)
+
+```{r}
+dend_complete <- as.dendrogram(hc_complete)
+dend_single <- as.dendrogram(hc_single)
+
+tanglegram(dend_complete, dend_single) 
+
+#parallel lines means that they are clustered the same in both dendrograms, in two places means they were clustered differently between the two different dendrograms
+
+entanglement(dend_complete, dend_single) # number computed is amount of entaglement
+
+untangle(dend_complete, dend_single, method = 'step1side') %>% 
+  entanglement() # number is lower, the dendrograms are lined up better, easier to pick out differences between the two
+
+untangle(dend_complete, dend_single, method = 'step1side') %>% 
+  tanglegram(common_subtrees_clusters_branches = TRUE)
+
+```
+
+### lets make a dendrogram in ggplot!
+
+```{r}
+ggdendrogram(hc_complete, rotate = TRUE) + 
+  theme_minimal() +
+  labs(x = 'Country')
+```
+
+
+
+
+
+
+
+
